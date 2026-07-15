@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Shot Log</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root {
+    --field: #0e2a1f;
+    --field-deep: #0a1f17;
+    --line: #1d4535;
+    --chalk: #f2f5f0;
+    --chalk-dim: #8ba596;
+    --flag: #e8613c;
+    --gold: #e4c261;
+    --card: #12352690;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    background: radial-gradient(120% 80% at 50% 0%, var(--field) 0%, var(--field-deep) 100%);
+    background-attachment: fixed;
+    color: var(--chalk);
+    font-family: ui-sans-serif, -apple-system, "SF Pro Text", system-ui, sans-serif;
+    min-height: 100vh;
+    padding: env(safe-area-inset-top) 18px calc(env(safe-area-inset-bottom) + 40px);
+    line-height: 1.4;
+  }
+  .wrap { max-width: 620px; margin: 0 auto; }
+
+  header {
+    padding: 28px 0 20px;
+    border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  }
+  h1 {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 13px; font-weight: 600; letter-spacing: 0.32em; text-transform: uppercase;
+    color: var(--chalk-dim);
+  }
+  h1 .dot { color: var(--flag); }
+  .hbtns { display: flex; gap: 8px; }
+  .reload {
+    background: none; border: 1px solid var(--line); color: var(--chalk-dim);
+    font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: 0.15em;
+    text-transform: uppercase; padding: 7px 12px; border-radius: 999px; cursor: pointer;
+  }
+  .reload:active { background: var(--line); }
+  .reload.active { background: var(--flag); border-color: var(--flag); color: #1a0d08; }
+
+  .totals {
+    display: flex; gap: 26px; padding: 22px 0 8px;
+  }
+  .totals .stat .n {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 30px; font-weight: 600; letter-spacing: -0.01em; line-height: 1;
+  }
+  .totals .stat .l {
+    font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--chalk-dim);
+    margin-top: 7px;
+  }
+
+  .section-label {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px; letter-spacing: 0.24em; text-transform: uppercase; color: var(--chalk-dim);
+    margin: 34px 0 14px; display: flex; align-items: center; gap: 10px;
+  }
+  .section-label::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+  /* per-club bars */
+  .club {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 14px 16px; margin-bottom: 9px;
+  }
+  .club-top { display: flex; align-items: baseline; justify-content: space-between; }
+  .club-name { font-size: 16px; font-weight: 600; letter-spacing: 0.01em; }
+  .club-avg {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 22px; font-weight: 600;
+  }
+  .club-avg .u { font-size: 11px; color: var(--chalk-dim); margin-left: 3px; }
+  .club-meta {
+    font-size: 11px; color: var(--chalk-dim); letter-spacing: 0.04em; margin-top: 3px;
+    display: flex; gap: 14px;
+  }
+  .bar { height: 5px; background: var(--line); border-radius: 3px; margin-top: 11px; overflow: hidden; }
+  .bar > span { display: block; height: 100%; background: linear-gradient(90deg, var(--gold), var(--flag)); border-radius: 3px; }
+
+  /* shot log */
+  .shot {
+    display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 12px;
+    padding: 12px 4px; border-bottom: 1px solid var(--line);
+  }
+  .shot .del {
+    background: none; border: none; color: var(--chalk-dim); padding: 6px; margin: -6px -2px -6px 0;
+    display: flex; align-items: center; cursor: pointer; border-radius: 8px;
+    opacity: 0.55; transition: opacity 0.12s, color 0.12s;
+  }
+  .shot .del:active { opacity: 1; color: var(--flag); background: var(--line); }
+  @media (hover: hover) { .shot .del:hover { opacity: 1; color: var(--flag); } }
+  .shot .club-tag {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; font-weight: 600;
+    min-width: 46px;
+  }
+  .shot .when { font-size: 12px; color: var(--chalk-dim); }
+  .shot .dist {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 17px; font-weight: 600;
+    text-align: right;
+  }
+  .shot .dist .u { font-size: 10px; color: var(--chalk-dim); margin-left: 2px; }
+  .shot .lowconf { color: var(--flag); font-size: 10px; letter-spacing: 0.1em; }
+  .shot .editedtag { color: var(--chalk-dim); font-size: 10px; letter-spacing: 0.1em; }
+
+  /* map */
+  #map {
+    height: 340px; border-radius: 14px; border: 1px solid var(--line);
+    background: var(--field-deep); overflow: hidden;
+  }
+  .edithint {
+    font-size: 11px; color: var(--chalk-dim); letter-spacing: 0.03em;
+    margin-top: 9px; text-align: center;
+  }
+  .leaflet-container { background: var(--field-deep); font-family: inherit; }
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip {
+    background: var(--field-deep); color: var(--chalk);
+    box-shadow: 0 2px 14px rgba(0,0,0,0.5);
+  }
+  .leaflet-popup-content { font-size: 13px; line-height: 1.5; }
+  .cdot {
+    display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    margin-right: 8px;
+  }
+  .drag-pin {
+    width: 18px; height: 18px; border-radius: 50%; box-sizing: border-box;
+    box-shadow: 0 0 0 2px rgba(10,31,23,0.65), 0 1px 6px rgba(0,0,0,0.5);
+  }
+
+  .msg { text-align: center; color: var(--chalk-dim); padding: 60px 20px; font-size: 14px; }
+  .msg.err { color: var(--flag); }
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+
+<script>
+// ---- config ----
+const CONFIG = {
+  base: "https://uuviw83w0h.execute-api.us-east-1.amazonaws.com",
+  key: "" // no API key currently
+};
+const ACCURACY_FLAG_M = 8; // shots recorded with worse GPS than this get flagged
+const PALETTE = ["#e4c261","#5ec8e5","#e8613c","#a78bfa","#7ed957","#ff8fab","#38bdf8","#facc15","#c084fc","#4ade80","#fb7185","#f97316","#22d3ee","#fbbf24"];
+
+const app = document.getElementById("app");
+
+// ---- session state ----
+let currentShots = [];
+let clubColorMap = {};
+let paletteIdx = 0;
+let mapRef = null;
+let shotLayers = {};   // ts -> { line, dot }
+let editMode = false;
+let editPins = [];     // { marker, s, which }
+
+function fmtWhen(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function isLowConf(s) {
+  return !s.edited && s.accuracy != null && s.accuracy > ACCURACY_FLAG_M;
+}
+
+function popupHtml(s) {
+  return `<b>${s.club}</b> — ${Math.round(s.distance_yds)} yds<br>${fmtWhen(s.ts)}`
+    + (s.edited ? `<br><span style="opacity:0.7">edited</span>` : "")
+    + (isLowConf(s) ? `<br>low GPS confidence (±${Math.round(s.accuracy)}m)` : "");
+}
+
+function header() {
+  return `
+    <header>
+      <h1>SHOT LOG<span class="dot">.</span></h1>
+      <div class="hbtns">
+        <button class="reload" id="edit">Edit</button>
+        <button class="reload" id="reload">Reload</button>
+      </div>
+    </header>`;
+}
+
+function hideEditBtn() {
+  const eb = document.getElementById("edit");
+  if (eb) eb.style.display = "none";
+}
+
+function errorScreen(msg) {
+  app.innerHTML = header() + `
+    <div class="msg err">${msg}</div>
+    <div style="text-align:center"><button class="reload" id="retry">Retry</button></div>`;
+  document.getElementById("reload").onclick = load;
+  document.getElementById("retry").onclick = load;
+  hideEditBtn();
+}
+
+async function load() {
+  editMode = false; editPins = []; shotLayers = {}; mapRef = null;
+  app.innerHTML = `<div class="msg">Loading your shots…</div>`;
+  try {
+    const url = CONFIG.key
+      ? `${CONFIG.base}/shot?key=${encodeURIComponent(CONFIG.key)}`
+      : `${CONFIG.base}/shot`;
+    const r = await fetch(url);
+    if (r.status === 401) { errorScreen("Unauthorized (401). The endpoint expects an API key."); return; }
+    if (!r.ok) { errorScreen(`Server returned ${r.status}. Check the endpoint is deployed.`); return; }
+    const data = await r.json();
+    render(data.shots || []);
+  } catch (e) {
+    errorScreen("Couldn't reach the endpoint. Check that it's deployed and CORS is enabled.");
+  }
+}
+
+function render(shots) {
+  currentShots = shots;
+  if (!shots.length) {
+    app.innerHTML = header() + `<div class="msg">No shots logged yet. Go pull a club.</div>`;
+    document.getElementById("reload").onclick = load;
+    hideEditBtn();
+    return;
+  }
+
+  app.innerHTML = header() + `
+    <div id="statsTop"></div>
+    <div class="section-label">Course view</div>
+    <div id="map"></div>
+    <div id="editHint" class="edithint" style="display:none">
+      Drag a point to fix it. Shots sharing that scan move together; distances recompute on release.
+    </div>
+    <div id="statsClubs"></div>
+    <div class="section-label">Shot log</div>
+    <div id="logRows"></div>`;
+
+  document.getElementById("reload").onclick = load;
+  document.getElementById("edit").onclick = toggleEdit;
+  refreshStats();
+  initMap();
+}
+
+// rebuilds totals / club cards / log rows from currentShots; never touches the map
+function refreshStats() {
+  const shots = currentShots;
+
+  const byClub = {};
+  for (const s of shots) (byClub[s.club] ||= []).push(s.distance_yds);
+  const clubs = Object.entries(byClub).map(([club, ds]) => {
+    const avg = ds.reduce((a, b) => a + b, 0) / ds.length;
+    return { club, avg, n: ds.length, max: Math.max(...ds), min: Math.min(...ds) };
+  }).sort((a, b) => b.avg - a.avg);
+
+  // stable colors: assign once per club per session
+  clubs.forEach(c => {
+    if (!clubColorMap[c.club]) clubColorMap[c.club] = PALETTE[paletteIdx++ % PALETTE.length];
+  });
+
+  const longest = shots.reduce((m, s) => s.distance_yds > m.distance_yds ? s : m, shots[0]);
+  const maxAvg = Math.max(...clubs.map(c => c.avg));
+
+  document.getElementById("statsTop").innerHTML = `
+    <div class="totals">
+      <div class="stat"><div class="n">${shots.length}</div><div class="l">Shots</div></div>
+      <div class="stat"><div class="n">${clubs.length}</div><div class="l">Clubs</div></div>
+      <div class="stat"><div class="n">${Math.round(longest.distance_yds)}</div><div class="l">Longest · ${longest.club}</div></div>
+    </div>`;
+
+  document.getElementById("statsClubs").innerHTML =
+    `<div class="section-label">By club</div>` +
+    clubs.map(c => `
+      <div class="club">
+        <div class="club-top">
+          <span class="club-name"><span class="cdot" style="background:${clubColorMap[c.club]}"></span>${c.club}</span>
+          <span class="club-avg">${Math.round(c.avg)}<span class="u">yds avg</span></span>
+        </div>
+        <div class="club-meta">
+          <span>${c.n} shot${c.n > 1 ? "s" : ""}</span>
+          <span>${Math.round(c.min)}–${Math.round(c.max)} range</span>
+        </div>
+        <div class="bar"><span style="width:${(c.avg / maxAvg * 100).toFixed(1)}%"></span></div>
+      </div>`).join("");
+
+  document.getElementById("logRows").innerHTML = [...shots].reverse().map(s => {
+    const low = isLowConf(s);
+    return `
+      <div class="shot">
+        <span class="club-tag">${s.club}</span>
+        <span class="when">${fmtWhen(s.ts)}${s.edited ? ` · <span class="editedtag">edited</span>` : ""}${low ? ` · <span class="lowconf">±${Math.round(s.accuracy)}m</span>` : ""}</span>
+        <span class="dist">${Math.round(s.distance_yds)}<span class="u">yds</span></span>
+        <button class="del" data-ts="${encodeURIComponent(s.ts)}" data-label="${s.club} · ${Math.round(s.distance_yds)} yds" aria-label="Delete shot">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+        </button>
+      </div>`;
+  }).join("");
+
+  for (const btn of document.querySelectorAll(".del")) {
+    btn.onclick = () => deleteShot(btn.dataset.ts, btn.dataset.label);
+  }
+}
+
+async function deleteShot(encodedTs, label) {
+  if (!confirm(`Delete this shot?\n\n${label}`)) return;
+  const sep = CONFIG.key ? `?key=${encodeURIComponent(CONFIG.key)}&` : "?";
+  const url = `${CONFIG.base}/shot${sep}ts=${encodedTs}`;
+  try {
+    const r = await fetch(url, { method: "DELETE" });
+    if (!r.ok) {
+      alert(`Couldn't delete (server returned ${r.status}).`);
+      return;
+    }
+    load(); // full refresh; exits edit mode
+  } catch (e) {
+    alert("Couldn't reach the endpoint to delete.");
+  }
+}
+
+// ---- map ----
+function initMap() {
+  if (!window.L) return; // map library didn't load; rest of the page still works
+  mapRef = L.map("map");
+  L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+    maxZoom: 19,
+    attribution: "Imagery &copy; Esri"
+  }).addTo(mapRef);
+
+  const pts = [];
+  for (const s of currentShots) {
+    addShotLayers(s);
+    pts.push([s.from_lat, s.from_lon], [s.to_lat, s.to_lon]);
+  }
+  if (pts.length) mapRef.fitBounds(pts, { padding: [28, 28], maxZoom: 18 });
+}
+
+function addShotLayers(s) {
+  const color = clubColorMap[s.club] || "#e4c261";
+  const line = L.polyline([[s.from_lat, s.from_lon], [s.to_lat, s.to_lon]], {
+    color, weight: 3, opacity: 0.9,
+    dashArray: isLowConf(s) ? "5 6" : null
+  }).addTo(mapRef).bindPopup(popupHtml(s));
+  const dot = L.circleMarker([s.to_lat, s.to_lon], {
+    radius: 3.5, color: "#0a1f17", weight: 1,
+    fillColor: color, fillOpacity: 1
+  }).addTo(mapRef);
+  shotLayers[s.ts] = { line, dot };
+}
+
+// ---- edit mode ----
+function toggleEdit() {
+  editMode = !editMode;
+  const btn = document.getElementById("edit");
+  btn.classList.toggle("active", editMode);
+  btn.textContent = editMode ? "Done" : "Edit";
+  document.getElementById("editHint").style.display = editMode ? "block" : "none";
+  if (editMode) addEditPins(); else removeEditPins();
+}
+
+function addEditPins() {
+  for (const s of currentShots) {
+    addPin(s, "from");
+    addPin(s, "to");
+  }
+}
+
+function addPin(s, which) {
+  const color = clubColorMap[s.club] || "#e4c261";
+  const isFrom = which === "from";
+  const icon = L.divIcon({
+    className: "",
+    html: `<div class="drag-pin" style="border:3px solid ${color};background:${isFrom ? "rgba(10,31,23,0.6)" : color}"></div>`,
+    iconSize: [18, 18], iconAnchor: [9, 9]
+  });
+  const marker = L.marker([s[which + "_lat"], s[which + "_lon"]], {
+    icon, draggable: true, zIndexOffset: 500
+  }).addTo(mapRef);
+
+  marker.on("drag", e => {
+    const ll = e.target.getLatLng();
+    const ly = shotLayers[s.ts];
+    const from = isFrom ? [ll.lat, ll.lng] : [s.from_lat, s.from_lon];
+    const to = isFrom ? [s.to_lat, s.to_lon] : [ll.lat, ll.lng];
+    ly.line.setLatLngs([from, to]);
+    if (!isFrom) ly.dot.setLatLng(ll);
+  });
+
+  marker.on("dragend", e => {
+    const ll = e.target.getLatLng();
+    commitEdit(s, which, ll.lat, ll.lng);
+  });
+
+  editPins.push({ marker, s, which });
+}
+
+function removeEditPins() {
+  for (const p of editPins) mapRef.removeLayer(p.marker);
+  editPins = [];
+}
+
+// A scan point is written into two records: shot N's `to` and shot N+1's `from`.
+// Editing one moves every endpoint born from the same scan, then saves each affected shot.
+async function commitEdit(s, which, lat, lon) {
+  const EPS = 1e-9; // same-scan coords are bit-identical; this only groups true siblings
+  const origLat = s[which + "_lat"], origLon = s[which + "_lon"];
+
+  const targets = [];
+  for (const sh of currentShots) {
+    for (const w of ["from", "to"]) {
+      if (Math.abs(sh[w + "_lat"] - origLat) < EPS && Math.abs(sh[w + "_lon"] - origLon) < EPS) {
+        targets.push({ sh, w });
+      }
+    }
+  }
+  const affected = [...new Set(targets.map(t => t.sh))];
+  const backup = affected.map(sh => ({
+    sh, from_lat: sh.from_lat, from_lon: sh.from_lon,
+    to_lat: sh.to_lat, to_lon: sh.to_lon,
+    distance_yds: sh.distance_yds, edited: sh.edited
+  }));
+
+  targets.forEach(t => { t.sh[t.w + "_lat"] = lat; t.sh[t.w + "_lon"] = lon; });
+
+  try {
+    for (const sh of affected) {
+      const qs = CONFIG.key ? `?key=${encodeURIComponent(CONFIG.key)}` : "";
+      const r = await fetch(`${CONFIG.base}/shot${qs}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ts: sh.ts,
+          from_lat: sh.from_lat, from_lon: sh.from_lon,
+          to_lat: sh.to_lat, to_lon: sh.to_lon
+        })
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const data = await r.json();
+      sh.distance_yds = data.distance_yds;
+      sh.edited = true;
+    }
+    syncLayers(affected);
+    refreshStats();
+  } catch (err) {
+    for (const b of backup) {
+      Object.assign(b.sh, {
+        from_lat: b.from_lat, from_lon: b.from_lon,
+        to_lat: b.to_lat, to_lon: b.to_lon,
+        distance_yds: b.distance_yds, edited: b.edited
+      });
+    }
+    syncLayers(affected);
+    alert("Couldn't save the edit — reverted.");
+  }
+}
+
+// bring lines, dots, popups, and every edit pin in line with currentShots
+function syncLayers(affectedShots) {
+  for (const sh of affectedShots) {
+    const ly = shotLayers[sh.ts];
+    ly.line.setLatLngs([[sh.from_lat, sh.from_lon], [sh.to_lat, sh.to_lon]]);
+    ly.line.setStyle({ dashArray: isLowConf(sh) ? "5 6" : null });
+    ly.line.setPopupContent(popupHtml(sh));
+    ly.dot.setLatLng([sh.to_lat, sh.to_lon]);
+  }
+  for (const p of editPins) {
+    p.marker.setLatLng([p.s[p.which + "_lat"], p.s[p.which + "_lon"]]);
+  }
+}
+
+load();
+</script>
+</body>
+</html>
