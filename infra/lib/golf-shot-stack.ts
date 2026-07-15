@@ -95,12 +95,6 @@ export class GolfShotStack extends Stack {
         role,
         timeout: Duration.seconds(3),
         memorySize: 128,
-        environment:
-          name === "trackShot"
-            ? // transition flag: keep accepting unauthenticated POSTs until
-              // existing Shortcuts carry device keys, then remove
-              { ALLOW_LEGACY_TRACK: "1" }
-            : undefined,
       });
       fn.applyRemovalPolicy(RemovalPolicy.RETAIN);
       functions[name] = fn;
