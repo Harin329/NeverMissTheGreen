@@ -41,7 +41,7 @@
     color: var(--chalk-dim);
   }
   h1 .dot { color: var(--flag); }
-  .hbtns { display: flex; gap: 8px; }
+  .hbtns { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
   .reload {
     background: none; border: 1px solid var(--line); color: var(--chalk-dim);
     font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: 0.15em;
@@ -49,6 +49,15 @@
   }
   .reload:active { background: var(--line); }
   .reload.active { background: var(--flag); border-color: var(--flag); color: #1a0d08; }
+
+  /* user filter */
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; padding: 16px 0 0; }
+  .chip {
+    background: none; border: 1px solid var(--line); color: var(--chalk-dim);
+    font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: 0.12em;
+    text-transform: uppercase; padding: 6px 12px; border-radius: 999px; cursor: pointer;
+  }
+  .chip.active { background: var(--gold); border-color: var(--gold); color: #1a1405; }
 
   .totals {
     display: flex; gap: 26px; padding: 22px 0 8px;
@@ -93,6 +102,7 @@
     display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 12px;
     padding: 12px 4px; border-bottom: 1px solid var(--line);
   }
+  .shot.nodel { grid-template-columns: auto 1fr auto; }
   .shot .del {
     background: none; border: none; color: var(--chalk-dim); padding: 6px; margin: -6px -2px -6px 0;
     display: flex; align-items: center; cursor: pointer; border-radius: 8px;
@@ -112,6 +122,7 @@
   .shot .dist .u { font-size: 10px; color: var(--chalk-dim); margin-left: 2px; }
   .shot .lowconf { color: var(--flag); font-size: 10px; letter-spacing: 0.1em; }
   .shot .editedtag { color: var(--chalk-dim); font-size: 10px; letter-spacing: 0.1em; }
+  .shot .who { color: var(--gold); font-size: 11px; }
 
   /* map */
   #map {
@@ -139,6 +150,38 @@
 
   .msg { text-align: center; color: var(--chalk-dim); padding: 60px 20px; font-size: 14px; }
   .msg.err { color: var(--flag); }
+
+  /* device keys panel */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(5, 15, 11, 0.82);
+    display: flex; align-items: flex-end; justify-content: center; z-index: 2000;
+  }
+  .panel {
+    background: var(--field-deep); border: 1px solid var(--line);
+    border-radius: 18px 18px 0 0; width: 100%; max-width: 620px;
+    max-height: 82vh; overflow: auto;
+    padding: 20px 18px calc(env(safe-area-inset-bottom) + 24px);
+  }
+  .panel .section-label { margin-top: 6px; }
+  .panel p { font-size: 13px; color: var(--chalk-dim); margin: 10px 0; }
+  .panel code.inline { color: var(--gold); font-family: ui-monospace, monospace; font-size: 12px; }
+  .keyrow {
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 0; border-bottom: 1px solid var(--line); font-size: 13px;
+  }
+  .keyrow .klabel { flex: 1; }
+  .keyrow .kmeta { color: var(--chalk-dim); font-family: ui-monospace, monospace; font-size: 11px; }
+  .newkey {
+    background: var(--card); border: 1px dashed var(--gold); border-radius: 12px;
+    padding: 14px; margin: 14px 0;
+  }
+  .newkey code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-all; color: var(--gold); }
+  .newkey .warn { font-size: 11px; color: var(--chalk-dim); margin-top: 8px; }
+  .krow-actions { display: flex; gap: 10px; margin-top: 14px; }
+  .krow-actions input {
+    flex: 1; background: none; border: 1px solid var(--line); border-radius: 999px;
+    color: var(--chalk); font-size: 13px; padding: 8px 14px; outline: none;
+  }
 </style>
 </head>
 <body>
@@ -148,21 +191,123 @@
 // ---- config ----
 const CONFIG = {
   base: "https://uuviw83w0h.execute-api.us-east-1.amazonaws.com",
-  key: "" // no API key currently
+  auth: {
+    domain: "https://nevermissthegreen.auth.us-east-1.amazoncognito.com",
+    clientId: "48c6i098puma903mgpb6d5spmj",
+    redirectUri: location.origin + location.pathname
+  }
 };
 const ACCURACY_FLAG_M = 8; // shots recorded with worse GPS than this get flagged
 const PALETTE = ["#e4c261","#5ec8e5","#e8613c","#a78bfa","#7ed957","#ff8fab","#38bdf8","#facc15","#c084fc","#4ade80","#fb7185","#f97316","#22d3ee","#fbbf24"];
 
 const app = document.getElementById("app");
 
+// ---- auth (Cognito hosted UI, OAuth2 code flow + PKCE) ----
+const tok = {
+  get id() { return localStorage.getItem("nmg_id"); },
+  get refresh() { return localStorage.getItem("nmg_refresh"); },
+  set(t) {
+    if (t.id_token) localStorage.setItem("nmg_id", t.id_token);
+    if (t.refresh_token) localStorage.setItem("nmg_refresh", t.refresh_token);
+  },
+  clear() { localStorage.removeItem("nmg_id"); localStorage.removeItem("nmg_refresh"); }
+};
+
+function b64url(bytes) {
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function jwtExp(token) {
+  try {
+    return JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).exp * 1000;
+  } catch { return 0; }
+}
+
+async function login() {
+  const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
+  sessionStorage.setItem("nmg_verifier", verifier);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  const p = new URLSearchParams({
+    client_id: CONFIG.auth.clientId,
+    response_type: "code",
+    scope: "openid email profile",
+    redirect_uri: CONFIG.auth.redirectUri,
+    code_challenge: b64url(new Uint8Array(digest)),
+    code_challenge_method: "S256"
+  });
+  location.href = `${CONFIG.auth.domain}/oauth2/authorize?${p}`;
+}
+
+async function tokenRequest(params) {
+  const r = await fetch(`${CONFIG.auth.domain}/oauth2/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ client_id: CONFIG.auth.clientId, ...params })
+  });
+  if (!r.ok) throw new Error("token endpoint " + r.status);
+  return r.json();
+}
+
+async function handleCallback() {
+  const code = new URLSearchParams(location.search).get("code");
+  if (!code) return;
+  const verifier = sessionStorage.getItem("nmg_verifier");
+  sessionStorage.removeItem("nmg_verifier");
+  try {
+    tok.set(await tokenRequest({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: CONFIG.auth.redirectUri,
+      code_verifier: verifier
+    }));
+  } catch (e) { /* token exchange failed; login screen will show */ }
+  history.replaceState(null, "", location.pathname);
+}
+
+async function ensureToken() {
+  const t = tok.id;
+  if (t && jwtExp(t) - Date.now() > 60000) return t;
+  if (!tok.refresh) return null;
+  try {
+    tok.set(await tokenRequest({ grant_type: "refresh_token", refresh_token: tok.refresh }));
+    return tok.id;
+  } catch { tok.clear(); return null; }
+}
+
+// returns null when not signed in — callers show the login screen
+async function authFetch(url, opts = {}) {
+  const t = await ensureToken();
+  if (!t) return null;
+  opts.headers = { ...(opts.headers || {}), Authorization: "Bearer " + t };
+  return fetch(url, opts);
+}
+
+function signOut() {
+  tok.clear();
+  const p = new URLSearchParams({
+    client_id: CONFIG.auth.clientId,
+    logout_uri: CONFIG.auth.redirectUri
+  });
+  location.href = `${CONFIG.auth.domain}/logout?${p}`;
+}
+
 // ---- session state ----
 let currentShots = [];
+let filterUser = null;   // null = everyone
 let clubColorMap = {};
 let paletteIdx = 0;
 let mapRef = null;
-let shotLayers = {};   // ts -> { line, dot }
+let shotLayers = {};   // uid -> { line, dot }
 let editMode = false;
 let editPins = [];     // { marker, s, which }
+
+function visible() {
+  return filterUser ? currentShots.filter(s => s.user === filterUser) : currentShots;
+}
+
+function multiUser() {
+  return new Set(currentShots.map(s => s.user)).size > 1;
+}
 
 function fmtWhen(iso) {
   const d = new Date(iso);
@@ -176,6 +321,7 @@ function isLowConf(s) {
 
 function popupHtml(s) {
   return `<b>${s.club}</b> — ${Math.round(s.distance_yds)} yds<br>${fmtWhen(s.ts)}`
+    + (multiUser() ? `<br><span style="opacity:0.7">${s.user}</span>` : "")
     + (s.edited ? `<br><span style="opacity:0.7">edited</span>` : "")
     + (isLowConf(s) ? `<br>low GPS confidence (±${Math.round(s.accuracy)}m)` : "");
 }
@@ -185,10 +331,23 @@ function header() {
     <header>
       <h1>SHOT LOG<span class="dot">.</span></h1>
       <div class="hbtns">
+        <button class="reload" id="keys">Keys</button>
         <button class="reload" id="edit">Edit</button>
         <button class="reload" id="reload">Reload</button>
+        <button class="reload" id="signout">Sign out</button>
       </div>
     </header>`;
+}
+
+function wireHeader() {
+  const r = document.getElementById("reload");
+  if (r) r.onclick = load;
+  const k = document.getElementById("keys");
+  if (k) k.onclick = showKeys;
+  const e = document.getElementById("edit");
+  if (e) e.onclick = toggleEdit;
+  const o = document.getElementById("signout");
+  if (o) o.onclick = signOut;
 }
 
 function hideEditBtn() {
@@ -196,42 +355,62 @@ function hideEditBtn() {
   if (eb) eb.style.display = "none";
 }
 
+function loginScreen() {
+  app.innerHTML = `
+    <header><h1>SHOT LOG<span class="dot">.</span></h1></header>
+    <div class="msg">Every club. Every shot. One tap.<br><br>Sign in to see the shared shot log.</div>
+    <div style="text-align:center"><button class="reload" id="signin">Sign in / Sign up</button></div>`;
+  document.getElementById("signin").onclick = login;
+}
+
 function errorScreen(msg) {
   app.innerHTML = header() + `
     <div class="msg err">${msg}</div>
     <div style="text-align:center"><button class="reload" id="retry">Retry</button></div>`;
-  document.getElementById("reload").onclick = load;
+  wireHeader();
   document.getElementById("retry").onclick = load;
   hideEditBtn();
 }
 
 async function load() {
   editMode = false; editPins = []; shotLayers = {}; mapRef = null;
-  app.innerHTML = `<div class="msg">Loading your shots…</div>`;
+  app.innerHTML = `<div class="msg">Loading shots…</div>`;
+  let r;
   try {
-    const url = CONFIG.key
-      ? `${CONFIG.base}/shot?key=${encodeURIComponent(CONFIG.key)}`
-      : `${CONFIG.base}/shot`;
-    const r = await fetch(url);
-    if (r.status === 401) { errorScreen("Unauthorized (401). The endpoint expects an API key."); return; }
-    if (!r.ok) { errorScreen(`Server returned ${r.status}. Check the endpoint is deployed.`); return; }
-    const data = await r.json();
-    render(data.shots || []);
+    r = await authFetch(`${CONFIG.base}/shot`);
   } catch (e) {
     errorScreen("Couldn't reach the endpoint. Check that it's deployed and CORS is enabled.");
+    return;
   }
+  if (!r) { loginScreen(); return; }
+  if (r.status === 401) { tok.clear(); loginScreen(); return; }
+  if (!r.ok) { errorScreen(`Server returned ${r.status}. Check the endpoint is deployed.`); return; }
+  const data = await r.json();
+  const shots = data.shots || [];
+  shots.forEach(s => { s._uid = s.user + "|" + s.ts; });
+  render(shots);
 }
 
 function render(shots) {
   currentShots = shots;
+  if (filterUser && !shots.some(s => s.user === filterUser)) filterUser = null;
+
   if (!shots.length) {
     app.innerHTML = header() + `<div class="msg">No shots logged yet. Go pull a club.</div>`;
-    document.getElementById("reload").onclick = load;
+    wireHeader();
     hideEditBtn();
     return;
   }
 
-  app.innerHTML = header() + `
+  const users = [...new Set(shots.map(s => s.user))].sort();
+  const chips = users.length > 1
+    ? `<div class="chips">
+        <button class="chip${!filterUser ? " active" : ""}" data-u="">Everyone</button>
+        ${users.map(u => `<button class="chip${filterUser === u ? " active" : ""}" data-u="${u}">${u}</button>`).join("")}
+      </div>`
+    : "";
+
+  app.innerHTML = header() + chips + `
     <div id="statsTop"></div>
     <div class="section-label">Course view</div>
     <div id="map"></div>
@@ -242,15 +421,24 @@ function render(shots) {
     <div class="section-label">Shot log</div>
     <div id="logRows"></div>`;
 
-  document.getElementById("reload").onclick = load;
-  document.getElementById("edit").onclick = toggleEdit;
+  wireHeader();
+  for (const btn of document.querySelectorAll(".chip")) {
+    btn.onclick = () => { filterUser = btn.dataset.u || null; render(currentShots); };
+  }
   refreshStats();
   initMap();
 }
 
-// rebuilds totals / club cards / log rows from currentShots; never touches the map
+// rebuilds totals / club cards / log rows from the visible shots; never touches the map
 function refreshStats() {
-  const shots = currentShots;
+  const shots = visible();
+  if (!shots.length) {
+    document.getElementById("statsTop").innerHTML = "";
+    document.getElementById("statsClubs").innerHTML = "";
+    document.getElementById("logRows").innerHTML = `<div class="msg">No shots for this player yet.</div>`;
+    return;
+  }
+  const showWho = multiUser() && !filterUser;
 
   const byClub = {};
   for (const s of shots) (byClub[s.club] ||= []).push(s.distance_yds);
@@ -291,28 +479,31 @@ function refreshStats() {
 
   document.getElementById("logRows").innerHTML = [...shots].reverse().map(s => {
     const low = isLowConf(s);
-    return `
-      <div class="shot">
-        <span class="club-tag">${s.club}</span>
-        <span class="when">${fmtWhen(s.ts)}${s.edited ? ` · <span class="editedtag">edited</span>` : ""}${low ? ` · <span class="lowconf">±${Math.round(s.accuracy)}m</span>` : ""}</span>
-        <span class="dist">${Math.round(s.distance_yds)}<span class="u">yds</span></span>
-        <button class="del" data-ts="${encodeURIComponent(s.ts)}" data-label="${s.club} · ${Math.round(s.distance_yds)} yds" aria-label="Delete shot">
+    const who = showWho ? ` · <span class="who">${s.user}</span>` : "";
+    const del = s.mine ? `
+        <button class="del" data-uid="${encodeURIComponent(s._uid)}" aria-label="Delete shot">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-        </button>
+        </button>` : "";
+    return `
+      <div class="shot${s.mine ? "" : " nodel"}">
+        <span class="club-tag">${s.club}</span>
+        <span class="when">${fmtWhen(s.ts)}${who}${s.edited ? ` · <span class="editedtag">edited</span>` : ""}${low ? ` · <span class="lowconf">±${Math.round(s.accuracy)}m</span>` : ""}</span>
+        <span class="dist">${Math.round(s.distance_yds)}<span class="u">yds</span></span>${del}
       </div>`;
   }).join("");
 
   for (const btn of document.querySelectorAll(".del")) {
-    btn.onclick = () => deleteShot(btn.dataset.ts, btn.dataset.label);
+    btn.onclick = () => deleteShot(decodeURIComponent(btn.dataset.uid));
   }
 }
 
-async function deleteShot(encodedTs, label) {
-  if (!confirm(`Delete this shot?\n\n${label}`)) return;
-  const sep = CONFIG.key ? `?key=${encodeURIComponent(CONFIG.key)}&` : "?";
-  const url = `${CONFIG.base}/shot${sep}ts=${encodedTs}`;
+async function deleteShot(uid) {
+  const s = currentShots.find(x => x._uid === uid);
+  if (!s) return;
+  if (!confirm(`Delete this shot?\n\n${s.club} · ${Math.round(s.distance_yds)} yds`)) return;
   try {
-    const r = await fetch(url, { method: "DELETE" });
+    const r = await authFetch(`${CONFIG.base}/shot?ts=${encodeURIComponent(s.ts)}`, { method: "DELETE" });
+    if (!r) { loginScreen(); return; }
     if (!r.ok) {
       alert(`Couldn't delete (server returned ${r.status}).`);
       return;
@@ -326,6 +517,8 @@ async function deleteShot(encodedTs, label) {
 // ---- map ----
 function initMap() {
   if (!window.L) return; // map library didn't load; rest of the page still works
+  const shots = visible();
+  if (!shots.length) return;
   mapRef = L.map("map");
   L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
     maxZoom: 19,
@@ -333,7 +526,7 @@ function initMap() {
   }).addTo(mapRef);
 
   const pts = [];
-  for (const s of currentShots) {
+  for (const s of shots) {
     addShotLayers(s);
     pts.push([s.from_lat, s.from_lon], [s.to_lat, s.to_lon]);
   }
@@ -350,7 +543,7 @@ function addShotLayers(s) {
     radius: 3.5, color: "#0a1f17", weight: 1,
     fillColor: color, fillOpacity: 1
   }).addTo(mapRef);
-  shotLayers[s.ts] = { line, dot };
+  shotLayers[s._uid] = { line, dot };
 }
 
 // ---- edit mode ----
@@ -364,7 +557,8 @@ function toggleEdit() {
 }
 
 function addEditPins() {
-  for (const s of currentShots) {
+  for (const s of visible()) {
+    if (!s.mine) continue; // can only fix your own shots
     addPin(s, "from");
     addPin(s, "to");
   }
@@ -384,7 +578,7 @@ function addPin(s, which) {
 
   marker.on("drag", e => {
     const ll = e.target.getLatLng();
-    const ly = shotLayers[s.ts];
+    const ly = shotLayers[s._uid];
     const from = isFrom ? [ll.lat, ll.lng] : [s.from_lat, s.from_lon];
     const to = isFrom ? [s.to_lat, s.to_lon] : [ll.lat, ll.lng];
     ly.line.setLatLngs([from, to]);
@@ -412,6 +606,7 @@ async function commitEdit(s, which, lat, lon) {
 
   const targets = [];
   for (const sh of currentShots) {
+    if (!sh.mine) continue; // only your own shots are editable
     for (const w of ["from", "to"]) {
       if (Math.abs(sh[w + "_lat"] - origLat) < EPS && Math.abs(sh[w + "_lon"] - origLon) < EPS) {
         targets.push({ sh, w });
@@ -429,8 +624,7 @@ async function commitEdit(s, which, lat, lon) {
 
   try {
     for (const sh of affected) {
-      const qs = CONFIG.key ? `?key=${encodeURIComponent(CONFIG.key)}` : "";
-      const r = await fetch(`${CONFIG.base}/shot${qs}`, {
+      const r = await authFetch(`${CONFIG.base}/shot`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -439,7 +633,7 @@ async function commitEdit(s, which, lat, lon) {
           to_lat: sh.to_lat, to_lon: sh.to_lon
         })
       });
-      if (!r.ok) throw new Error("HTTP " + r.status);
+      if (!r || !r.ok) throw new Error("HTTP " + (r ? r.status : "auth"));
       const data = await r.json();
       sh.distance_yds = data.distance_yds;
       sh.edited = true;
@@ -462,7 +656,8 @@ async function commitEdit(s, which, lat, lon) {
 // bring lines, dots, popups, and every edit pin in line with currentShots
 function syncLayers(affectedShots) {
   for (const sh of affectedShots) {
-    const ly = shotLayers[sh.ts];
+    const ly = shotLayers[sh._uid];
+    if (!ly) continue;
     ly.line.setLatLngs([[sh.from_lat, sh.from_lon], [sh.to_lat, sh.to_lon]]);
     ly.line.setStyle({ dashArray: isLowConf(sh) ? "5 6" : null });
     ly.line.setPopupContent(popupHtml(sh));
@@ -473,7 +668,118 @@ function syncLayers(affectedShots) {
   }
 }
 
-load();
+// ---- device keys ----
+async function showKeys() {
+  let keys = [];
+  try {
+    const r = await authFetch(`${CONFIG.base}/keys`);
+    if (!r) { loginScreen(); return; }
+    if (!r.ok) { alert(`Couldn't load keys (server returned ${r.status}).`); return; }
+    keys = (await r.json()).keys || [];
+  } catch (e) {
+    alert("Couldn't reach the endpoint.");
+    return;
+  }
+  renderKeysPanel(keys, null);
+}
+
+function renderKeysPanel(keys, freshKey) {
+  closeKeysPanel();
+  const overlay = document.createElement("div");
+  overlay.className = "overlay";
+  overlay.id = "keysOverlay";
+  overlay.innerHTML = `
+    <div class="panel">
+      <div class="section-label">Device keys</div>
+      <p>A device key lets an iOS Shortcut log shots as you. In the Shortcut's
+      “Get Contents of URL” action, add a header named <code class="inline">x-api-key</code>
+      with your key as the value.</p>
+      ${freshKey ? `
+        <div class="newkey">
+          <code id="freshKey">${freshKey}</code>
+          <div class="krow-actions">
+            <button class="reload" id="copyKey">Copy</button>
+          </div>
+          <div class="warn">Save it now — you won't be able to see it again.</div>
+        </div>` : ""}
+      <div id="keyList">
+        ${keys.length ? keys.map(k => `
+          <div class="keyrow" data-id="${k.id}">
+            <span class="klabel">${k.label || "Device key"}</span>
+            <span class="kmeta">····${k.last4}</span>
+            <span class="kmeta">${k.created ? k.created.slice(0, 10) : ""}</span>
+            <button class="reload krevoke" data-id="${k.id}">Revoke</button>
+          </div>`).join("") : `<p>No keys yet.</p>`}
+      </div>
+      <div class="krow-actions">
+        <input id="keyLabel" placeholder="Label (e.g. Harin's iPhone)" maxlength="60">
+        <button class="reload" id="keyCreate">New key</button>
+      </div>
+      <div class="krow-actions">
+        <button class="reload" id="keysClose">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  overlay.onclick = e => { if (e.target === overlay) closeKeysPanel(); };
+  document.getElementById("keysClose").onclick = closeKeysPanel;
+  document.getElementById("keyCreate").onclick = createKey;
+  if (freshKey) {
+    document.getElementById("copyKey").onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(freshKey);
+        document.getElementById("copyKey").textContent = "Copied";
+      } catch { /* clipboard unavailable; key is visible to copy manually */ }
+    };
+  }
+  for (const btn of overlay.querySelectorAll(".krevoke")) {
+    btn.onclick = () => revokeKey(btn.dataset.id);
+  }
+}
+
+function closeKeysPanel() {
+  const el = document.getElementById("keysOverlay");
+  if (el) el.remove();
+}
+
+async function createKey() {
+  const label = (document.getElementById("keyLabel").value || "").trim() || "Device key";
+  try {
+    const r = await authFetch(`${CONFIG.base}/keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label })
+    });
+    if (!r) { loginScreen(); return; }
+    if (!r.ok) { alert(`Couldn't create key (server returned ${r.status}).`); return; }
+    const created = await r.json();
+    const lr = await authFetch(`${CONFIG.base}/keys`);
+    const keys = lr && lr.ok ? (await lr.json()).keys || [] : [];
+    renderKeysPanel(keys, created.key);
+  } catch (e) {
+    alert("Couldn't reach the endpoint.");
+  }
+}
+
+async function revokeKey(id) {
+  if (!confirm("Revoke this key? Shortcuts using it will stop logging.")) return;
+  try {
+    const r = await authFetch(`${CONFIG.base}/keys?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!r) { loginScreen(); return; }
+    if (!r.ok) { alert(`Couldn't revoke (server returned ${r.status}).`); return; }
+    const lr = await authFetch(`${CONFIG.base}/keys`);
+    const keys = lr && lr.ok ? (await lr.json()).keys || [] : [];
+    renderKeysPanel(keys, null);
+  } catch (e) {
+    alert("Couldn't reach the endpoint.");
+  }
+}
+
+// ---- boot ----
+(async function boot() {
+  await handleCallback();
+  load();
+})();
 </script>
 </body>
 </html>
