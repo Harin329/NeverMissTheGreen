@@ -128,6 +128,24 @@
   .sgtag { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; }
   .footnote { font-size: 11px; color: var(--chalk-dim); letter-spacing: 0.03em; margin-top: 4px; }
 
+  /* round groups (date + course) */
+  .round-hd {
+    width: 100%; display: flex; align-items: baseline; gap: 10px;
+    background: none; border: none; border-bottom: 1px solid var(--line);
+    color: var(--chalk); font: inherit; text-align: left;
+    padding: 13px 4px; cursor: pointer;
+  }
+  .round-hd:active { background: var(--card); }
+  .round-hd .chev { color: var(--chalk-dim); font-size: 10px; flex: none; width: 13px; }
+  .round-hd .round-title { flex: 1; font-size: 14px; font-weight: 600; letter-spacing: 0.01em; }
+  .round-hd .round-title .course { color: var(--gold); }
+  .round-hd .round-meta {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px;
+    color: var(--chalk-dim); white-space: nowrap;
+  }
+  .round-rows { padding-left: 10px; }
+  .morewrap { text-align: center; padding: 20px 0 4px; }
+
   /* map */
   #map {
     height: 340px; border-radius: 14px; border: 1px solid var(--line);
@@ -305,6 +323,12 @@ let shotLayers = {};   // uid -> { line, dot }
 let editMode = false;
 let editPins = [];     // { marker, s, which }
 
+// shot-log pagination: rounds (date + course groups), newest first
+const ROUNDS_PER_PAGE = 5;
+let logPage = 1;
+let expandedRounds = new Set(); // round keys currently open
+let autoExpanded = false;       // newest round opens once per load
+
 function visible() {
   return filterUser ? currentShots.filter(s => s.user === filterUser) : currentShots;
 }
@@ -317,6 +341,26 @@ function fmtWhen(iso) {
   const d = new Date(iso);
   if (isNaN(d)) return iso;
   return d.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function dateKey(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+
+function fmtDate(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  const opts = { weekday: "short", month: "short", day: "numeric" };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
+  return d.toLocaleDateString([], opts);
+}
+
+function fmtTime(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 function isLowConf(s) {
@@ -379,6 +423,7 @@ function errorScreen(msg) {
 
 async function load() {
   editMode = false; editPins = []; shotLayers = {}; mapRef = null;
+  logPage = 1; expandedRounds = new Set(); autoExpanded = false;
   app.innerHTML = `<div class="msg">Loading shots…</div>`;
   let r;
   try {
@@ -493,25 +538,142 @@ function refreshStats() {
       </div>`).join("")
     + `<div class="footnote">SG: strokes gained vs PGA Tour baseline, tee to green — each hole's last scan point stands in for the pin; putts aren't tracked.</div>`;
 
-  document.getElementById("logRows").innerHTML = [...shots].reverse().map(s => {
-    const low = isLowConf(s);
-    const sg = s.sg != null ? fmtSG(s.sg, 1) : null;
-    const who = showWho ? ` · <span class="who">${s.user}</span>` : "";
-    const del = s.mine ? `
-        <button class="del" data-uid="${encodeURIComponent(s._uid)}" aria-label="Delete shot">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-        </button>` : "";
+  renderLog(shots, showWho);
+}
+
+// ---- shot log: rounds (date + course), paginated ----
+// Shots carry no course field, so courses are inferred by clustering scan
+// points: a shot joins the nearest known course centroid within
+// COURSE_RADIUS_YDS, else it founds a new course. Chronological order makes
+// the clustering deterministic, and clustering currentShots (not the
+// filtered view) keeps course identity stable across user-filter changes.
+const COURSE_RADIUS_YDS = 2500;
+
+function computeCourses(shots) {
+  const seq = [...shots].sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+  const courses = [];
+  for (const s of seq) {
+    let best = null, bestD = Infinity;
+    for (const c of courses) {
+      const d = distYds(c.lat, c.lon, s.from_lat, s.from_lon);
+      if (d < bestD) { bestD = d; best = c; }
+    }
+    if (!best || bestD > COURSE_RADIUS_YDS) {
+      // key by the founding scan point (stable), not the centroid (drifts)
+      best = { key: s.from_lat.toFixed(4) + "," + s.from_lon.toFixed(4), lat: s.from_lat, lon: s.from_lon, n: 0 };
+      courses.push(best);
+    }
+    best.lat = (best.lat * best.n + s.from_lat) / (best.n + 1);
+    best.lon = (best.lon * best.n + s.from_lon) / (best.n + 1);
+    best.n++;
+    s._course = best;
+  }
+  return courses;
+}
+
+let courseNames = {};
+try { courseNames = JSON.parse(localStorage.getItem("nmg_course_names")) || {}; } catch { /* corrupt cache; refetch */ }
+const geocodeAttempted = new Set();
+let geocodeBusy = false;
+
+function courseLabel(c) {
+  return courseNames[c.key] || `Course @ ${c.lat.toFixed(3)}, ${c.lon.toFixed(3)}`;
+}
+
+async function geocodeCourse(c) {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=17&lat=${c.lat}&lon=${c.lon}`);
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d.name || (d.display_name || "").split(",")[0].trim() || null;
+  } catch { return null; }
+}
+
+// Names come from OpenStreetMap reverse geocoding, once per course ever:
+// results persist in localStorage and headers are patched in place when a
+// name arrives. Offline/unnamed, the coordinate fallback label stands.
+async function resolveCourseNames(courses) {
+  if (geocodeBusy) return;
+  geocodeBusy = true;
+  try {
+    for (const c of courses) {
+      if (courseNames[c.key] || geocodeAttempted.has(c.key)) continue;
+      geocodeAttempted.add(c.key);
+      const name = await geocodeCourse(c);
+      if (name) {
+        courseNames[c.key] = name;
+        try { localStorage.setItem("nmg_course_names", JSON.stringify(courseNames)); } catch { /* storage full; name lives for the session */ }
+        for (const el of document.querySelectorAll(`.course[data-ck="${CSS.escape(c.key)}"]`)) el.textContent = name;
+      }
+      await new Promise(res => setTimeout(res, 1100)); // Nominatim asks ≤1 req/s
+    }
+  } finally { geocodeBusy = false; }
+}
+
+function shotRow(s, showWho) {
+  const low = isLowConf(s);
+  const sg = s.sg != null ? fmtSG(s.sg, 1) : null;
+  const who = showWho ? ` · <span class="who">${s.user}</span>` : "";
+  const del = s.mine ? `
+      <button class="del" data-uid="${encodeURIComponent(s._uid)}" aria-label="Delete shot">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+      </button>` : "";
+  return `
+    <div class="shot${s.mine ? "" : " nodel"}">
+      <span class="club-tag">${s.club}</span>
+      <span class="when">${fmtTime(s.ts)}${who}${sg ? ` · <span class="sgtag ${sgClass(sg)}">${sg}</span>` : ""}${s.edited ? ` · <span class="editedtag">edited</span>` : ""}${low ? ` · <span class="lowconf">±${Math.round(s.accuracy)}m</span>` : ""}</span>
+      <span class="dist">${Math.round(s.distance_yds)}<span class="u">yds</span></span>${del}
+    </div>`;
+}
+
+// Only the log is paginated — totals, club averages, SG, and the map are
+// computed from every visible shot, so collapsed/older rounds still count.
+function renderLog(shots, showWho) {
+  const courses = computeCourses(currentShots);
+
+  const groups = new Map(); // insertion order = newest round first
+  for (const s of [...shots].reverse()) {
+    const k = dateKey(s.ts) + "|" + s._course.key;
+    if (!groups.has(k)) groups.set(k, { key: k, ts: s.ts, course: s._course, shots: [] });
+    groups.get(k).shots.push(s);
+  }
+  const rounds = [...groups.values()];
+
+  const shown = rounds.slice(0, logPage * ROUNDS_PER_PAGE);
+  if (!autoExpanded && shown.length) { expandedRounds.add(shown[0].key); autoExpanded = true; }
+
+  document.getElementById("logRows").innerHTML = shown.map(g => {
+    const open = expandedRounds.has(g.key);
+    const sgs = g.shots.filter(s => s.sg != null).map(s => s.sg);
+    const sgSum = sgs.length ? fmtSG(sgs.reduce((a, b) => a + b, 0), 1) : null;
     return `
-      <div class="shot${s.mine ? "" : " nodel"}">
-        <span class="club-tag">${s.club}</span>
-        <span class="when">${fmtWhen(s.ts)}${who}${sg ? ` · <span class="sgtag ${sgClass(sg)}">${sg}</span>` : ""}${s.edited ? ` · <span class="editedtag">edited</span>` : ""}${low ? ` · <span class="lowconf">±${Math.round(s.accuracy)}m</span>` : ""}</span>
-        <span class="dist">${Math.round(s.distance_yds)}<span class="u">yds</span></span>${del}
+      <div class="round">
+        <button class="round-hd" data-rk="${g.key}" aria-expanded="${open}">
+          <span class="chev">${open ? "▾" : "▸"}</span>
+          <span class="round-title">${fmtDate(g.ts)} · <span class="course" data-ck="${g.course.key}">${courseLabel(g.course)}</span></span>
+          <span class="round-meta">${g.shots.length} shot${g.shots.length > 1 ? "s" : ""}${sgSum ? ` · <span class="sgtag ${sgClass(sgSum)}">${sgSum} SG</span>` : ""}</span>
+        </button>
+        ${open ? `<div class="round-rows">${g.shots.map(s => shotRow(s, showWho)).join("")}</div>` : ""}
       </div>`;
-  }).join("");
+  }).join("") + (rounds.length > shown.length
+    ? `<div class="morewrap"><button class="reload" id="moreRounds">Show older rounds (${rounds.length - shown.length} more)</button></div>`
+    : "");
+
+  for (const hd of document.querySelectorAll(".round-hd")) {
+    hd.onclick = () => {
+      const k = hd.dataset.rk;
+      if (expandedRounds.has(k)) expandedRounds.delete(k); else expandedRounds.add(k);
+      refreshStats();
+    };
+  }
+  const more = document.getElementById("moreRounds");
+  if (more) more.onclick = () => { logPage++; refreshStats(); };
 
   for (const btn of document.querySelectorAll(".del")) {
     btn.onclick = () => deleteShot(decodeURIComponent(btn.dataset.uid));
   }
+
+  resolveCourseNames(courses);
 }
 
 async function deleteShot(uid) {

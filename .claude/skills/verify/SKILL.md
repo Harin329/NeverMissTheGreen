@@ -25,6 +25,12 @@ and API stubbed — no AWS access needed.
 5. The cdnjs Leaflet URLs are blocked by the sandbox proxy — route
    `cdnjs.cloudflare.com` to the npm `leaflet/dist` files, and abort
    `arcgisonline.com` tile requests (the page tolerates a missing map).
+6. Route `nominatim.openstreetmap.org` too: the shot log reverse-geocodes
+   course names from it (one lookup per course, cached in
+   `nmg_course_names`). Fulfill with `{"name": "..."}` keyed off the
+   request's lat to demo names, or abort to exercise the coordinate
+   fallback labels. Lookups are spaced ~1.1s apart, so wait for the name
+   text, not a fixed timeout.
 
 ## Gotchas
 
@@ -37,6 +43,7 @@ and API stubbed — no AWS access needed.
 - Full-page screenshots band/wash out below the fold because of
   `background-attachment: fixed` — screenshot artifact, not a page bug.
 
-Worked flows: totals strip, per-club cards, shot rows, user filter chips,
+Worked flows: totals strip, per-club cards, round groups (expand/collapse
+headers, the show-older pager, course-name patch-in), user filter chips,
 map popups (click a polyline midpoint via `mapRef.latLngToContainerPoint`),
 empty state via reload with an empty fixture.
