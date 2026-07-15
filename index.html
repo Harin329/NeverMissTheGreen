@@ -60,7 +60,7 @@
   .chip.active { background: var(--gold); border-color: var(--gold); color: #1a1405; }
 
   .totals {
-    display: flex; gap: 26px; padding: 22px 0 8px;
+    display: flex; flex-wrap: wrap; gap: 26px; padding: 22px 0 8px;
   }
   .totals .stat .n {
     font-family: ui-monospace, "SF Mono", Menlo, monospace;
@@ -123,6 +123,10 @@
   .shot .lowconf { color: var(--flag); font-size: 10px; letter-spacing: 0.1em; }
   .shot .editedtag { color: var(--chalk-dim); font-size: 10px; letter-spacing: 0.1em; }
   .shot .who { color: var(--gold); font-size: 11px; }
+  .sg-pos { color: #7ed957; }
+  .sg-neg { color: var(--flag); }
+  .sgtag { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; }
+  .footnote { font-size: 11px; color: var(--chalk-dim); letter-spacing: 0.03em; margin-top: 4px; }
 
   /* map */
   #map {
@@ -321,6 +325,7 @@ function isLowConf(s) {
 
 function popupHtml(s) {
   return `<b>${s.club}</b> — ${Math.round(s.distance_yds)} yds<br>${fmtWhen(s.ts)}`
+    + (s.sg != null ? `<br>SG ${fmtSG(s.sg, 2)}` : "")
     + (multiUser() ? `<br><span style="opacity:0.7">${s.user}</span>` : "")
     + (s.edited ? `<br><span style="opacity:0.7">edited</span>` : "")
     + (isLowConf(s) ? `<br>low GPS confidence (±${Math.round(s.accuracy)}m)` : "");
@@ -440,11 +445,16 @@ function refreshStats() {
   }
   const showWho = multiUser() && !filterUser;
 
+  computeStrokesGained(shots);
+
   const byClub = {};
-  for (const s of shots) (byClub[s.club] ||= []).push(s.distance_yds);
-  const clubs = Object.entries(byClub).map(([club, ds]) => {
+  for (const s of shots) (byClub[s.club] ||= []).push(s);
+  const clubs = Object.entries(byClub).map(([club, cs]) => {
+    const ds = cs.map(s => s.distance_yds);
+    const sgs = cs.filter(s => s.sg != null).map(s => s.sg);
     const avg = ds.reduce((a, b) => a + b, 0) / ds.length;
-    return { club, avg, n: ds.length, max: Math.max(...ds), min: Math.min(...ds) };
+    const sgTxt = sgs.length ? fmtSG(sgs.reduce((a, b) => a + b, 0) / sgs.length, 2) : null;
+    return { club, avg, n: ds.length, max: Math.max(...ds), min: Math.min(...ds), sgTxt };
   }).sort((a, b) => b.avg - a.avg);
 
   // stable colors: assign once per club per session
@@ -455,11 +465,15 @@ function refreshStats() {
   const longest = shots.reduce((m, s) => s.distance_yds > m.distance_yds ? s : m, shots[0]);
   const maxAvg = Math.max(...clubs.map(c => c.avg));
 
+  const sgVals = shots.map(s => s.sg).filter(v => v != null);
+  const sgTotal = sgVals.length ? fmtSG(sgVals.reduce((a, b) => a + b, 0) / sgVals.length, 2) : null;
+
   document.getElementById("statsTop").innerHTML = `
     <div class="totals">
       <div class="stat"><div class="n">${shots.length}</div><div class="l">Shots</div></div>
       <div class="stat"><div class="n">${clubs.length}</div><div class="l">Clubs</div></div>
       <div class="stat"><div class="n">${Math.round(longest.distance_yds)}</div><div class="l">Longest · ${longest.club}</div></div>
+      ${sgTotal ? `<div class="stat"><div class="n ${sgClass(sgTotal)}">${sgTotal}</div><div class="l">SG / shot</div></div>` : ""}
     </div>`;
 
   document.getElementById("statsClubs").innerHTML =
@@ -473,12 +487,15 @@ function refreshStats() {
         <div class="club-meta">
           <span>${c.n} shot${c.n > 1 ? "s" : ""}</span>
           <span>${Math.round(c.min)}–${Math.round(c.max)} range</span>
+          ${c.sgTxt ? `<span class="${sgClass(c.sgTxt)}">${c.sgTxt} SG avg</span>` : ""}
         </div>
         <div class="bar"><span style="width:${(c.avg / maxAvg * 100).toFixed(1)}%"></span></div>
-      </div>`).join("");
+      </div>`).join("")
+    + `<div class="footnote">SG: strokes gained vs PGA Tour baseline, tee to green — each hole's last scan point stands in for the pin; putts aren't tracked.</div>`;
 
   document.getElementById("logRows").innerHTML = [...shots].reverse().map(s => {
     const low = isLowConf(s);
+    const sg = s.sg != null ? fmtSG(s.sg, 1) : null;
     const who = showWho ? ` · <span class="who">${s.user}</span>` : "";
     const del = s.mine ? `
         <button class="del" data-uid="${encodeURIComponent(s._uid)}" aria-label="Delete shot">
@@ -487,7 +504,7 @@ function refreshStats() {
     return `
       <div class="shot${s.mine ? "" : " nodel"}">
         <span class="club-tag">${s.club}</span>
-        <span class="when">${fmtWhen(s.ts)}${who}${s.edited ? ` · <span class="editedtag">edited</span>` : ""}${low ? ` · <span class="lowconf">±${Math.round(s.accuracy)}m</span>` : ""}</span>
+        <span class="when">${fmtWhen(s.ts)}${who}${sg ? ` · <span class="sgtag ${sgClass(sg)}">${sg}</span>` : ""}${s.edited ? ` · <span class="editedtag">edited</span>` : ""}${low ? ` · <span class="lowconf">±${Math.round(s.accuracy)}m</span>` : ""}</span>
         <span class="dist">${Math.round(s.distance_yds)}<span class="u">yds</span></span>${del}
       </div>`;
   }).join("");
@@ -512,6 +529,121 @@ async function deleteShot(uid) {
   } catch (e) {
     alert("Couldn't reach the endpoint to delete.");
   }
+}
+
+// ---- strokes gained ----
+// Tee-to-green strokes gained vs the PGA Tour baseline (Broadie's
+// expected-strokes tables), computed from the logged scan points alone.
+// Holes are rebuilt by chaining shots that share a scan point, and the last
+// point of each hole (where putting began, or where End was pressed) stands
+// in for the pin. Lies are unknown, so a hole's first shot is priced off the
+// tee table and everything else off the fairway table; putts aren't
+// distance-tracked, so putting SG and penalty strokes are out of scope.
+const PUTTER_NAMES = new Set(["putter", "p", "putt"]); // keep in sync with trackShot
+const E_TEE = [ // [yards to pin, expected strokes]
+  [100, 2.92], [120, 2.99], [140, 2.97], [160, 2.99], [180, 3.05],
+  [200, 3.12], [220, 3.17], [240, 3.25], [260, 3.45], [280, 3.65],
+  [300, 3.71], [320, 3.79], [340, 3.86], [360, 3.92], [380, 3.96],
+  [400, 3.99], [420, 4.02], [440, 4.08], [460, 4.17], [480, 4.28],
+  [500, 4.41], [520, 4.54], [540, 4.65], [560, 4.74], [580, 4.79], [600, 4.82]
+];
+const E_FAIRWAY = [
+  [10, 2.18], [20, 2.40], [40, 2.60], [60, 2.70], [80, 2.75], [100, 2.80],
+  [120, 2.85], [140, 2.91], [160, 2.98], [180, 3.08], [200, 3.19],
+  [220, 3.32], [240, 3.45], [260, 3.58], [280, 3.69], [300, 3.78],
+  [320, 3.84], [340, 3.88], [360, 3.95], [380, 4.03], [400, 4.11],
+  [420, 4.15], [440, 4.20], [460, 4.29], [480, 4.40], [500, 4.53],
+  [520, 4.66], [540, 4.78], [560, 4.86], [580, 4.91], [600, 4.94]
+];
+const E_GREEN_FT = [ // [feet to pin, expected putts]
+  [1, 1.001], [2, 1.009], [3, 1.053], [4, 1.147], [5, 1.256], [6, 1.357],
+  [7, 1.443], [8, 1.515], [9, 1.575], [10, 1.626], [15, 1.784], [20, 1.869],
+  [30, 1.978], [40, 2.058], [50, 2.135], [60, 2.211], [90, 2.549]
+];
+// tour-typical first-putt distance (ft) after reaching the green from d yards
+// out; prices the "found the green" end state, since putts aren't tracked
+const PIN_PROX_FT = [
+  [10, 4], [20, 7], [30, 9], [50, 12], [75, 15], [100, 17], [125, 20],
+  [150, 23], [175, 27], [200, 32], [225, 38], [250, 45], [300, 55]
+];
+
+function isPutt(s) {
+  return PUTTER_NAMES.has(String(s.club).trim().toLowerCase());
+}
+
+// same equirectangular approximation trackShot uses for distance_yds
+function distYds(lat1, lon1, lat2, lon2) {
+  const rad = Math.PI / 180;
+  const x = (lon2 - lon1) * rad * Math.cos(((lat1 + lat2) / 2) * rad);
+  const y = (lat2 - lat1) * rad;
+  return Math.sqrt(x * x + y * y) * 6371000 * 1.09361;
+}
+
+function lerpTable(t, x) {
+  if (x <= t[0][0]) return t[0][1];
+  if (x >= t[t.length - 1][0]) return t[t.length - 1][1];
+  let i = 1;
+  while (t[i][0] < x) i++;
+  return t[i - 1][1] + (t[i][1] - t[i - 1][1]) * (x - t[i - 1][0]) / (t[i][0] - t[i - 1][0]);
+}
+
+function expStrokes(yds, fromTee) {
+  if (fromTee && yds >= E_TEE[0][0]) return lerpTable(E_TEE, yds);
+  return lerpTable(E_FAIRWAY, yds);
+}
+
+// consecutive shots chain while one ends exactly where the next begins (the
+// shared scan point — see commitEdit); a break in the chain is a new hole
+function splitHoles(shots) {
+  const EPS = 1e-9;
+  const holes = [];
+  let hole = [];
+  for (const s of shots) {
+    const prev = hole[hole.length - 1];
+    if (prev && !(Math.abs(prev.to_lat - s.from_lat) < EPS && Math.abs(prev.to_lon - s.from_lon) < EPS)) {
+      holes.push(hole);
+      hole = [];
+    }
+    hole.push(s);
+  }
+  if (hole.length) holes.push(hole);
+  return holes;
+}
+
+// annotates each shot with s.sg (null for putts — putting isn't tracked)
+function computeStrokesGained(shots) {
+  for (const s of shots) s.sg = null;
+  const byUser = {};
+  for (const s of shots) (byUser[s.user] ||= []).push(s);
+  for (const seq of Object.values(byUser)) {
+    seq.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+    for (const hole of splitHoles(seq)) {
+      const pin = hole[hole.length - 1]; // its to-point stands in for the pin
+      hole.forEach((s, i) => {
+        if (isPutt(s)) return;
+        const dStart = distYds(s.from_lat, s.from_lon, pin.to_lat, pin.to_lon);
+        let eEnd;
+        if (i === hole.length - 1) {
+          eEnd = lerpTable(E_GREEN_FT, lerpTable(PIN_PROX_FT, dStart));
+        } else {
+          const dEnd = distYds(s.to_lat, s.to_lon, pin.to_lat, pin.to_lon);
+          eEnd = isPutt(hole[i + 1])
+            ? lerpTable(E_GREEN_FT, dEnd * 3) // next shot is a putt: this one found the green
+            : expStrokes(dEnd, false);
+        }
+        s.sg = expStrokes(dStart, i === 0) - eEnd - 1;
+      });
+    }
+  }
+}
+
+function fmtSG(v, dp) {
+  const a = Math.abs(v).toFixed(dp);
+  return (v < 0 && +a > 0 ? "-" : "+") + a;
+}
+
+function sgClass(txt) {
+  return txt[0] === "-" ? "sg-neg" : "sg-pos";
 }
 
 // ---- map ----
@@ -638,8 +770,8 @@ async function commitEdit(s, which, lat, lon) {
       sh.distance_yds = data.distance_yds;
       sh.edited = true;
     }
+    refreshStats(); // before syncLayers: popups show the recomputed SG
     syncLayers(affected);
-    refreshStats();
   } catch (err) {
     for (const b of backup) {
       Object.assign(b.sh, {
