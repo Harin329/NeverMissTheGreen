@@ -16,7 +16,11 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import { Construct } from "constructs";
 
 const LAMBDA_DIR = path.join(__dirname, "..", "lambda");
-const SITE_URL = "https://nevermissthegreen.netlify.app/";
+// every origin the site is served from must be a registered OAuth callback
+const SITE_URLS = [
+  "https://nevermissthegreen.netlify.app/",
+  "https://nevermiss.harinwu.com/",
+];
 
 const FUNCTIONS: Record<string, string> = {
   getShot: "arn:aws:iam::146016028579:role/service-role/getShot-role-a3a2osyf",
@@ -73,8 +77,8 @@ export class GolfShotStack extends Stack {
           cognito.OAuthScope.EMAIL,
           cognito.OAuthScope.PROFILE,
         ],
-        callbackUrls: [SITE_URL, "http://localhost:8888/"],
-        logoutUrls: [SITE_URL, "http://localhost:8888/"],
+        callbackUrls: [...SITE_URLS, "http://localhost:8888/"],
+        logoutUrls: [...SITE_URLS, "http://localhost:8888/"],
       },
       preventUserExistenceErrors: true,
     });
