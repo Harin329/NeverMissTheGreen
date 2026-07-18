@@ -1,0 +1,96 @@
+{
+  "source": "DynamoDB golf_shots, 74 shots as of 2026-07-17",
+  "clubs": [
+    {
+      "club": "driver",
+      "avg_dist": 244.0,
+      "std_dev_yds": 17.3,
+      "samples": 17,
+      "lateral_std_dev_yds": 100
+    },
+    {
+      "club": "3w",
+      "avg_dist": 211.3,
+      "std_dev_yds": 2.9,
+      "samples": 4,
+      "lateral_std_dev_yds": 60
+    },
+    {
+      "club": "3h",
+      "avg_dist": 198.9,
+      "std_dev_yds": null,
+      "samples": 1,
+      "lateral_std_dev_yds": 60
+    },
+    {
+      "club": "4ir",
+      "avg_dist": 202.2,
+      "std_dev_yds": 17.8,
+      "samples": 2,
+      "lateral_std_dev_yds": 30
+    },
+    {
+      "club": "5ir",
+      "avg_dist": 191.3,
+      "std_dev_yds": 10.2,
+      "samples": 7,
+      "lateral_std_dev_yds": 25
+    },
+    {
+      "club": "6ir",
+      "avg_dist": 178.3,
+      "std_dev_yds": 10.0,
+      "samples": 4,
+      "lateral_std_dev_yds": 20
+    },
+    {
+      "club": "7ir",
+      "avg_dist": 173.6,
+      "std_dev_yds": 9.2,
+      "samples": 3,
+      "lateral_std_dev_yds": 20
+    },
+    {
+      "club": "8ir",
+      "avg_dist": 163.9,
+      "std_dev_yds": 12.4,
+      "samples": 8,
+      "lateral_std_dev_yds": 20
+    },
+    {
+      "club": "9ir",
+      "avg_dist": 141.1,
+      "std_dev_yds": 7.2,
+      "samples": 4,
+      "lateral_std_dev_yds": 20
+    },
+    {
+      "club": "pw",
+      "avg_dist": 130.6,
+      "std_dev_yds": 8.6,
+      "samples": 4,
+      "lateral_std_dev_yds": 20
+    },
+    {
+      "club": "50",
+      "avg_dist": 115.6,
+      "std_dev_yds": 9.3,
+      "samples": 4,
+      "lateral_std_dev_yds": 10
+    },
+    {
+      "club": "54",
+      "avg_dist": 105.5,
+      "std_dev_yds": 17.2,
+      "samples": 9,
+      "lateral_std_dev_yds": 10
+    },
+    {
+      "club": "58",
+      "avg_dist": 87.7,
+      "std_dev_yds": 9.5,
+      "samples": 7,
+      "lateral_std_dev_yds": 10
+    }
+  ]
+}

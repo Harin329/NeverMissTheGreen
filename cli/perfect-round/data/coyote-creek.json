@@ -1,0 +1,24 @@
+{
+  "name": "Willows Run — Coyote Creek (Redmond, WA)",
+  "tees": ["black", "white", "gold"],
+  "holes": [
+    { "number": 1,  "par": 4, "yds": { "black": 365, "white": 326, "gold": 301 } },
+    { "number": 2,  "par": 5, "yds": { "black": 530, "white": 499, "gold": 482 } },
+    { "number": 3,  "par": 4, "yds": { "black": 398, "white": 360, "gold": 336 } },
+    { "number": 4,  "par": 4, "yds": { "black": 373, "white": 344, "gold": 321 } },
+    { "number": 5,  "par": 3, "yds": { "black": 183, "white": 147, "gold": 116 } },
+    { "number": 6,  "par": 4, "yds": { "black": 331, "white": 308, "gold": 284 } },
+    { "number": 7,  "par": 4, "yds": { "black": 306, "white": 279, "gold": 279 } },
+    { "number": 8,  "par": 5, "yds": { "black": 460, "white": 436, "gold": 409 } },
+    { "number": 9,  "par": 3, "yds": { "black": 135, "white": 109, "gold": 109 } },
+    { "number": 10, "par": 5, "yds": { "black": 548, "white": 506, "gold": 479 } },
+    { "number": 11, "par": 4, "yds": { "black": 379, "white": 327, "gold": 323 } },
+    { "number": 12, "par": 4, "yds": { "black": 410, "white": 388, "gold": 372 } },
+    { "number": 13, "par": 3, "yds": { "black": 150, "white": 150, "gold": 127 } },
+    { "number": 14, "par": 4, "yds": { "black": 377, "white": 324, "gold": 281 } },
+    { "number": 15, "par": 4, "yds": { "black": 436, "white": 397, "gold": 355 } },
+    { "number": 16, "par": 4, "yds": { "black": 299, "white": 278, "gold": 278 } },
+    { "number": 17, "par": 3, "yds": { "black": 165, "white": 165, "gold": 146 } },
+    { "number": 18, "par": 5, "yds": { "black": 499, "white": 483, "gold": 443 } }
+  ]
+}
